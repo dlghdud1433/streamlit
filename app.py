@@ -1,138 +1,144 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from pathlib import Path
-import urllib.request
-import json
 
-# ── 데이터 로드 (파일 없으면 더미 생성) ──────────────────────────────────────
-DATA_FILE = Path(__file__).parent / "merged_sales.xlsx"
+st.set_page_config(page_title="2026 북중미 월드컵", page_icon="⚽", layout="wide")
 
-def make_dummy() -> pd.DataFrame:
-    rng = np.random.default_rng(7)
-    products_a = ["노트북", "스마트폰", "태블릿", "이어폰", "충전기", "마우스", "키보드"]
-    products_b = ["갤럭시탭", "아이패드", "에어팟", "맥북", "모니터", "웹캠", "스피커"]
-    dates_a = pd.date_range("2024-03-01", "2024-05-31")
-    dates_b = pd.date_range("2024-04-01", "2024-06-30")
-    rows = [
-        {"날짜": dates_a[i], "지점": "A",
-         "상품": products_a[rng.integers(len(products_a))],
-         "금액": int(rng.integers(15_000, 850_000))}
-        for i in rng.integers(len(dates_a), size=20)
-    ] + [
-        {"날짜": dates_b[i], "지점": "B",
-         "상품": products_b[rng.integers(len(products_b))],
-         "금액": int(rng.integers(20_000, 1_200_000))}
-        for i in rng.integers(len(dates_b), size=20)
-    ]
-    return pd.DataFrame(rows).sort_values("날짜").reset_index(drop=True)
+# ── 팀 & 강도 데이터 ──────────────────────────────────────────────────────────
+GROUPS = {
+    "A": ["미국", "잉글랜드", "이란", "세네갈"],
+    "B": ["캐나다", "독일", "모로코", "세르비아"],
+    "C": ["멕시코", "스페인", "일본", "폴란드"],
+    "D": ["아르헨티나", "프랑스", "호주", "에콰도르"],
+    "E": ["브라질", "콜롬비아", "나이지리아", "크로아티아"],
+    "F": ["네덜란드", "한국", "포르투갈", "스위스"],
+    "G": ["벨기에", "덴마크", "카메룬", "코스타리카"],
+    "H": ["이탈리아", "우루과이", "사우디아라비아", "튀니지"],
+    "I": ["카타르", "튀르키예", "이집트", "자메이카"],
+    "J": ["칠레", "웨일스", "알제리", "뉴질랜드"],
+    "K": ["페루", "체코", "코트디부아르", "파나마"],
+    "L": ["베네수엘라", "오스트리아", "가나", "온두라스"],
+}
 
-if DATA_FILE.exists():
-    df = pd.read_excel(DATA_FILE)
-else:
-    df = make_dummy()
+STRENGTH = {
+    "미국": 7, "잉글랜드": 8, "이란": 5, "세네갈": 6,
+    "캐나다": 6, "독일": 8, "모로코": 7, "세르비아": 6,
+    "멕시코": 7, "스페인": 9, "일본": 7, "폴란드": 6,
+    "아르헨티나": 10, "프랑스": 9, "호주": 5, "에콰도르": 6,
+    "브라질": 9, "콜롬비아": 7, "나이지리아": 6, "크로아티아": 7,
+    "네덜란드": 8, "한국": 7, "포르투갈": 8, "스위스": 7,
+    "벨기에": 7, "덴마크": 7, "카메룬": 5, "코스타리카": 5,
+    "이탈리아": 8, "우루과이": 7, "사우디아라비아": 5, "튀니지": 5,
+    "카타르": 5, "튀르키예": 6, "이집트": 6, "자메이카": 4,
+    "칠레": 6, "웨일스": 6, "알제리": 6, "뉴질랜드": 4,
+    "페루": 6, "체코": 6, "코트디부아르": 6, "파나마": 4,
+    "베네수엘라": 6, "오스트리아": 7, "가나": 5, "온두라스": 4,
+}
 
-df["날짜"] = pd.to_datetime(df["날짜"])
-df["금액"] = df["금액"].astype(int)
+# ── 경기 결과 시뮬레이션 ──────────────────────────────────────────────────────
+@st.cache_data
+def build_matches() -> pd.DataFrame:
+    rng = np.random.default_rng(42)
+    dates = pd.date_range("2026-06-11", periods=3, freq="4D")
+    rows = []
+    for group, teams in GROUPS.items():
+        pairs = [(teams[i], teams[j])
+                 for i in range(len(teams)) for j in range(i + 1, len(teams))]
+        for idx, (home, away) in enumerate(pairs):
+            lam_h = max(0.3, STRENGTH[home] / 5 + rng.normal(0, 0.4))
+            lam_a = max(0.3, STRENGTH[away] / 5 + rng.normal(0, 0.4))
+            gh, ga = int(rng.poisson(lam_h)), int(rng.poisson(lam_a))
+            rows.append({
+                "조": group,
+                "경기일": dates[idx // 2],
+                "홈팀": home, "홈득점": gh,
+                "원정팀": away, "원정득점": ga,
+            })
+    return pd.DataFrame(rows)
 
-# ── 사이드바 필터 ─────────────────────────────────────────────────────────────
-branches = sorted(df["지점"].unique().tolist())
 
-with st.sidebar:
-    st.header("필터")
+def standings(df: pd.DataFrame, group: str) -> pd.DataFrame:
+    gdf = df[df["조"] == group]
+    result = []
+    for team in GROUPS[group]:
+        h = gdf[gdf["홈팀"] == team]
+        a = gdf[gdf["원정팀"] == team]
+        gf = int(h["홈득점"].sum() + a["원정득점"].sum())
+        ga = int(h["원정득점"].sum() + a["홈득점"].sum())
+        w = int((h["홈득점"] > h["원정득점"]).sum() +
+                (a["원정득점"] > a["홈득점"]).sum())
+        d = int((h["홈득점"] == h["원정득점"]).sum() +
+                (a["원정득점"] == a["홈득점"]).sum())
+        l = int((h["홈득점"] < h["원정득점"]).sum() +
+                (a["원정득점"] < a["홈득점"]).sum())
+        result.append({"팀": team, "경기": w+d+l, "승": w, "무": d, "패": l,
+                       "득점": gf, "실점": ga, "득실차": gf-ga, "승점": w*3+d})
+    return (pd.DataFrame(result)
+            .sort_values(["승점", "득실차", "득점"], ascending=False)
+            .reset_index(drop=True))
 
-    date_min = df["날짜"].min().date()
-    date_max = df["날짜"].max().date()
-    date_range = st.date_input(
-        "날짜 범위",
-        value=(date_min, date_max),
-        min_value=date_min,
-        max_value=date_max,
-    )
-
-    selected = st.multiselect(
-        "지점 선택",
-        options=branches,
-        default=branches,
-    )
-
-# date_input이 단일 날짜만 선택된 경우 방어
-if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-    start_date, end_date = date_range
-else:
-    start_date = end_date = date_range[0] if date_range else date_min
-
-filtered = df[
-    (df["날짜"].dt.date >= start_date)
-    & (df["날짜"].dt.date <= end_date)
-    & (df["지점"].isin(selected) if selected else False)
-]
 
 # ── 레이아웃 ──────────────────────────────────────────────────────────────────
-total = filtered["금액"].sum()
-st.metric(label="전체 매출 합계", value=f"₩ {total:,}")
+df = build_matches()
+
+st.title("⚽ 2026 북중미 월드컵 — 조별리그 대시보드")
+st.caption("시뮬레이션 데이터 기반 · 실제 결과와 다를 수 있습니다")
+
+# 사이드바 조 선택
+with st.sidebar:
+    st.header("조 선택")
+    sel = st.radio("조", list(GROUPS.keys()), format_func=lambda x: f"{x}조")
+
+# 상단 요약 지표
+total_goals = int(df["홈득점"].sum() + df["원정득점"].sum())
+total_matches = len(df)
+c1, c2, c3 = st.columns(3)
+c1.metric("총 경기 수", f"{total_matches}경기")
+c2.metric("총 득점", f"{total_goals}골")
+c3.metric("경기당 평균 골", f"{total_goals / total_matches:.2f}")
 
 st.divider()
 
-# ── 월별 매출 추이 선그래프 ───────────────────────────────────────────────────
-st.subheader("월별 매출 추이")
+# 조별 순위표
+st.subheader(f"{sel}조 순위")
 
-monthly = (
-    filtered.assign(월=filtered["날짜"].dt.to_period("M").astype(str))
-    .groupby(["월", "지점"])["금액"]
-    .sum()
-    .reset_index()
-    .pivot(index="월", columns="지점", values="금액")
-    .fillna(0)
-    .sort_index()
-)
+tb = standings(df, sel)
 
-st.line_chart(monthly)
+def row_color(row):
+    if row.name < 2:
+        return ["background-color:#d4edda"] * len(row)   # 16강 직행
+    if row.name == 2:
+        return ["background-color:#fff3cd"] * len(row)   # 와일드카드 경쟁
+    return [""] * len(row)
 
-# ── 상품별 매출 표 ────────────────────────────────────────────────────────────
-st.subheader("상품별 매출")
-
-product_sales = (
-    filtered.groupby("상품")["금액"]
-    .agg(판매건수="count", 매출합계="sum")
-    .sort_values("매출합계", ascending=False)
-    .reset_index()
-)
-product_sales["매출합계"] = product_sales["매출합계"].map(lambda x: f"₩ {x:,}")
-
-st.dataframe(product_sales, use_container_width=True, hide_index=True)
+st.dataframe(tb.style.apply(row_color, axis=1), use_container_width=True, hide_index=True)
+st.caption("🟢 16강 직행 (1·2위)　🟡 와일드카드 경쟁 (3위)")
 
 st.divider()
 
-# ── 서울 날씨 (Open-Meteo) ────────────────────────────────────────────────────
-st.subheader("서울 오늘 날씨")
+# 경기 결과
+st.subheader(f"{sel}조 경기 결과")
 
-@st.cache_data(ttl=600)
-def fetch_weather():
-    url = (
-        "https://api.open-meteo.com/v1/forecast"
-        "?latitude=37.5665&longitude=126.9780"
-        "&current=temperature_2m,weathercode"
-        "&hourly=temperature_2m"
-        "&timezone=Asia%2FSeoul"
-        "&forecast_days=1"
-    )
-    with urllib.request.urlopen(url, timeout=8) as res:
-        return json.loads(res.read())
+match_view = (
+    df[df["조"] == sel]
+    .assign(경기일=lambda d: d["경기일"].dt.strftime("%m/%d"),
+            결과=lambda d: d["홈득점"].astype(str) + " : " + d["원정득점"].astype(str))
+    [["경기일", "홈팀", "결과", "원정팀"]]
+    .sort_values("경기일")
+    .reset_index(drop=True)
+)
+st.dataframe(match_view, use_container_width=True, hide_index=True)
 
-try:
-    data = fetch_weather()
+st.divider()
 
-    current_temp = data["current"]["temperature_2m"]
-    current_time = data["current"]["time"].replace("T", " ")
-    st.metric(label=f"현재 기온 ({current_time} 기준)", value=f"{current_temp} °C")
+# 조별 총 득점 비교
+st.subheader("조별 총 득점 비교")
 
-    hourly_df = pd.DataFrame({
-        "시각": pd.to_datetime(data["hourly"]["time"]).strftime("%H:%M"),
-        "기온 (°C)": data["hourly"]["temperature_2m"],
-    }).set_index("시각")
-
-    st.line_chart(hourly_df)
-
-except Exception as e:
-    st.warning(f"날씨 데이터를 불러오지 못했습니다. ({e})")
+goals_by_group = (
+    df.groupby("조")
+    .apply(lambda g: int(g["홈득점"].sum() + g["원정득점"].sum()), include_groups=False)
+    .rename("총득점")
+    .reset_index()
+    .set_index("조")
+)
+st.bar_chart(goals_by_group)
