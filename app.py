@@ -1,22 +1,37 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from pathlib import Path
 import urllib.request
 import json
 
-# ── 데이터 로드 ───────────────────────────────────────────────────────────────
+# ── 데이터 로드 (파일 없으면 더미 생성) ──────────────────────────────────────
 DATA_FILE = Path(__file__).parent / "merged_sales.xlsx"
 
-st.title("매출 대시보드")
+def make_dummy() -> pd.DataFrame:
+    rng = np.random.default_rng(7)
+    products_a = ["노트북", "스마트폰", "태블릿", "이어폰", "충전기", "마우스", "키보드"]
+    products_b = ["갤럭시탭", "아이패드", "에어팟", "맥북", "모니터", "웹캠", "스피커"]
+    dates_a = pd.date_range("2024-03-01", "2024-05-31")
+    dates_b = pd.date_range("2024-04-01", "2024-06-30")
+    rows = [
+        {"날짜": dates_a[i], "지점": "A",
+         "상품": products_a[rng.integers(len(products_a))],
+         "금액": int(rng.integers(15_000, 850_000))}
+        for i in rng.integers(len(dates_a), size=20)
+    ] + [
+        {"날짜": dates_b[i], "지점": "B",
+         "상품": products_b[rng.integers(len(products_b))],
+         "금액": int(rng.integers(20_000, 1_200_000))}
+        for i in rng.integers(len(dates_b), size=20)
+    ]
+    return pd.DataFrame(rows).sort_values("날짜").reset_index(drop=True)
 
-if not DATA_FILE.exists():
-    st.error(
-        f"데이터 파일을 찾을 수 없습니다: `{DATA_FILE.name}`\n\n"
-        "같은 폴더에 `merged_sales.xlsx`가 있는지 확인해 주세요."
-    )
-    st.stop()
+if DATA_FILE.exists():
+    df = pd.read_excel(DATA_FILE)
+else:
+    df = make_dummy()
 
-df = pd.read_excel(DATA_FILE)
 df["날짜"] = pd.to_datetime(df["날짜"])
 df["금액"] = df["금액"].astype(int)
 
